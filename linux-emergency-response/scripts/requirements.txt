@@ -1,0 +1,5 @@
+# Linux Emergency Response Tools - Python Dependencies
+# Generated for Python 3.x
+
+# Process and system monitoring library
+psutil>=5.9.0
