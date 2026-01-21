@@ -1,0 +1,4 @@
+# AIEmergencyTools - Shellcode Analysis Module
+# Python dependencies
+
+capstone>=4.0.0

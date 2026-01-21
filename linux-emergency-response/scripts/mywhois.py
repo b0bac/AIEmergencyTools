@@ -1,4 +1,5 @@
-# -*- coding:UTF-8 -*-
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 
 # 引入依赖的Py库、包、模块

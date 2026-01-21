@@ -1,4 +1,5 @@
-# -*- coding:utf-8 -*-
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 
 '''
@@ -12,10 +13,36 @@ import sys
 import time
 import psutil
 import platform
+import subprocess
+import re
 from optparse import OptionParser
 
 
 # 全局函数:
+
+def validate_ip(ipaddress):
+    '''验证IP地址格式，防止命令注入'''
+    # 只允许IP地址格式: x.x.x.x 或类似格式
+    # 使用严格正则表达式验证
+    pattern = r'^[\w\.\-\:\(\)\s]+$'
+    if not re.match(pattern, ipaddress):
+        return False
+    # 防止命令注入的关键字符检查
+    dangerous_chars = [';', '&', '|', '`', '$', '(', ')', '\n', '\r', '\t']
+    for char in dangerous_chars:
+        if char in ipaddress and char not in '().:-':
+            return False
+    return True
+
+def safe_run_command(cmd_list):
+    '''安全地执行命令，使用subprocess'''
+    try:
+        result = subprocess.run(cmd_list, capture_output=True, text=True, timeout=30)
+        return result.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return ""
+    except Exception:
+        return ""
 def OSinfo():
     '''操作系统基本信息查看'''
     core_number = psutil.cpu_count()
@@ -41,7 +68,8 @@ def OSinfo():
 def SuccessLoginDetail():
     '''查找登录成功的记录'''
     try:
-        successer_list = os.popen("who /var/log/wtmp | awk '{print $1,$3\"-\"$4\"\",$5}'").read().split('\n')[:-1]
+        output = safe_run_command(['who', '/var/log/wtmp'])
+        successer_list = output.split('\n')[:-1] if output else []
     except Exception as reason:
         print("读取记录失败")
         exit(0)
@@ -49,9 +77,10 @@ def SuccessLoginDetail():
         print("未找到成功的登录信息")
         exit(0)
     for success in successer_list:
-        info_string = success.split(" ")
+        info_string = success.split()
         try:
-            print('账户 : %s    时间 : %s  来源 : %s'%(info_string[0],info_string[1],info_string[2]))
+            if len(info_string) >= 5:
+                print('账户 : %s    时间 : %s  来源 : %s'%(info_string[0],info_string[1],info_string[4]))
         except Exception:
             continue
 
@@ -59,17 +88,22 @@ def SuccessLoginDetail():
 def FailedLoginDetail():
     '''查找登录失败的日志'''
     try:
-        failer_list = os.popen("lastb | awk '{print $1,$3,$5\"-\"$6\"-\"$7\"-\"$8\"-\"$9}'").read().split('\n')[0:-3]
+        output = safe_run_command(['lastb'])
+        lines = output.split('\n') if output else []
+        failer_list = lines[0:-3] if len(lines) > 3 else []
     except Exception as reason:
         print("读取记录失败")
         exit(0)
-    if len(failer_list) == 1 and successer_list[0] == '':
+    if len(failer_list) == 0 or (len(failer_list) == 1 and failer_list[0] == ''):
         print("未找到失败的登录信息")
         exit(0)
     for failer in failer_list:
-        info_string = failer.split(" ")
+        if not failer.strip():
+            continue
+        info_string = failer.split()
         try:
-            print('账户 : %s    时间 : %s  来源 : %s'%(info_string[0],info_string[1],info_string[2]))
+            if len(info_string) >= 3:
+                print('账户 : %s    终端 : %s  来源 : %s'%(info_string[0],info_string[1],info_string[2]))
         except Exception:
             continue
 
@@ -78,51 +112,103 @@ def LoginIpList():
     ipresult = []
     flag = True
     try:
-        ip_failer_list = os.popen("lastb | awk '{print $3}' | sort | uniq -c | sort -k 1").read().split("\n")[2:-1]
+        lastb_output = safe_run_command(['lastb'])
+        if lastb_output:
+            lines = lastb_output.split('\n')[2:-1] if len(lastb_output.split('\n')) > 3 else []
+            # 使用subprocess进行管道操作
+            ip_failer_raw = [line.split() for line in lines if line.strip()]
+            ip_counts = {}
+            for line_parts in ip_failer_raw:
+                if len(line_parts) >= 3:
+                    ipaddr = line_parts[2]
+                    if 'Thu' not in ipaddr:
+                        ip_counts[ipaddr] = ip_counts.get(ipaddr, 0) + 1
+            ip_failer_list = [f"{count} {ip}" for ip, count in sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)]
+        else:
+            ip_failer_list = []
     except Exception as reason:
         flag = False
+
     if flag:
         for ip in ip_failer_list:
             ipaddress = ip.lstrip().split(' ')
-            ipaddr = ipaddress[1]
-            if 'Thu' in ipaddr:
-                continue
-            ipresult.append((ipaddr,'失败'))
+            if len(ipaddress) >= 2:
+                ipaddr = ipaddress[1]
+                if 'Thu' in ipaddr:
+                    continue
+                ipresult.append((ipaddr,'失败'))
+
     flag = True
     try:
-        ip_success_list =  os.popen("who /var/log/wtmp| awk '{print $5}' | sort | uniq -c | sort -k 1").read().split("\n")[:-1]
+        who_output = safe_run_command(['who', '/var/log/wtmp'])
+        if who_output:
+            lines = who_output.split('\n')[:-1]
+            ip_counts = {}
+            for line in lines:
+                if not line.strip():
+                    continue
+                line_parts = line.split()
+                if len(line_parts) >= 5:
+                    ipaddr = line_parts[4].replace('(','').replace(')','')
+                    if ':' not in ipaddr:
+                        ip_counts[ipaddr] = ip_counts.get(ipaddr, 0) + 1
+            ip_success_list = [f"{count} {ip}" for ip, count in sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)]
+        else:
+            ip_success_list = []
     except Exception as reason:
         flag = False
+
     if flag:
-        if len(ip_success_list) == 0:
-            pass
-        else:
+        if len(ip_success_list) > 0:
             for ip in ip_success_list:
                 ipaddress = ip.lstrip().split(' ')
-                ipaddr = ipaddress[1]
-                if ':' in ipaddr:
-                    continue
-                ipaddr = ipaddr.replace('(','').replace(')','')
-                ipresult.append((ipaddr,"成功"))
+                if len(ipaddress) >= 2:
+                    ipaddr = ipaddress[1]
+                    ipresult.append((ipaddr,"成功"))
+
     for ip in ipresult:
         print('%s  %s'%(str(ip[0]),str(ip[1])))
 
 
 def LoginCheckByIP(ipaddress,kind="success"):
     '''查看IP的登录信息查看'''
-    command = "who /var/log/wtmp | grep -E \"%s\" | awk '{print $1,$3\"-\"$4\"\",$5}'"%ipaddress if kind == 'success' else "lastb | grep -E \"%s\" | awk '{print $1,$3,$5\"-\"$6\"-\"$7\"-\"$8\"-\"$9}'"%ipaddress
+    # 验证IP地址，防止命令注入
+    if not validate_ip(ipaddress):
+        print("错误: 无效的IP地址格式")
+        exit(1)
+
     try:
-        _list = os.popen(command).read().split('\n')
+        if kind == 'success':
+            # 使用subprocess安全执行命令
+            who_output = safe_run_command(['who', '/var/log/wtmp'])
+            if who_output:
+                # 过滤包含目标IP的行
+                _list = [line for line in who_output.split('\n') if ipaddress in line]
+            else:
+                _list = []
+        else:
+            lastb_output = safe_run_command(['lastb'])
+            if lastb_output:
+                _list = [line for line in lastb_output.split('\n') if ipaddress in line]
+            else:
+                _list = []
     except Exception as reason:
         print("读取记录失败")
         exit(0)
-    if len(_list) == 1 and _list[0] == '':
+    if len(_list) <= 1 or (len(_list) == 1 and _list[0] == ''):
         print("未找到相关的登录信息")
         exit(0)
     for ip in _list:
-        info_string = ip.split(" ")
+        if not ip.strip():
+            continue
+        info_string = ip.split()
         try:
-            print('账户 : %s    时间 : %s  来源 : %s'%(info_string[0],info_string[1],info_string[2]))
+            if kind == 'success':
+                if len(info_string) >= 5:
+                    print('账户 : %s    时间 : %s  来源 : %s'%(info_string[0],info_string[1],info_string[4]))
+            else:
+                if len(info_string) >= 3:
+                    print('账户 : %s    终端 : %s  来源 : %s'%(info_string[0],info_string[1],info_string[2]))
         except Exception:
             continue
 
@@ -130,11 +216,15 @@ def KernelModInfo():
     '''查看内核加载模块'''
     result = []
     try:
-        modlist = os.popen("lsmod | awk '{print $1,$4}'").read().split('\n')[1:-1]
-        for mod in modlist:
-            modname = mod.split(' ')[0]
-            modsource = mod.split(' ')[1]
-            result.append((modname,modsource))
+        output = safe_run_command(['lsmod'])
+        if output:
+            modlist = output.split('\n')[1:-1]
+            for mod in modlist:
+                parts = mod.split()
+                if len(parts) >= 2:
+                    modname = parts[0]
+                    modsource = parts[1] if len(parts) > 1 else ''
+                    result.append((modname, modsource))
     except Exception as reason:
         pass
     for ret in result:

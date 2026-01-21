@@ -1,4 +1,5 @@
-# -*- coding:utf-8 -*-
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 '''
 对于应急中需要查看的域名和IP地址进行威胁情报的查询
@@ -20,7 +21,15 @@ from optparse import OptionParser
 
 #  配置APIKEY
 # 请从环境变量 VIRUSTOTAL_API_KEY 读取，或使用 base64 编码的 'api_key+username'
-APIKEY = os.getenv('VIRUSTOTAL_API_KEY', 'YOUR_VIRUSTOTAL_API_KEY_BASE64_ENCODED')
+APIKEY = os.getenv('VIRUSTOTAL_API_KEY')
+
+# 验证APIKEY是否已配置
+if not APIKEY or APIKEY == 'YOUR_VIRUSTOTAL_API_KEY_BASE64_ENCODED':
+    print("[!] Error: VIRUSTOTAL_API_KEY environment variable not set or invalid")
+    print("[*] Please set your VirusTotal API key:")
+    print("    export VIRUSTOTAL_API_KEY='your_base64_encoded_key+username'")
+    print("[*] Get your API key from: https://www.virustotal.com/")
+    sys.exit(1)
 
 #  定义VirusTotal类
 
@@ -36,7 +45,8 @@ class virustotal(object):
     def _upload_check_file(self,_file):
         _file = os.path.basename(_file)
         try:
-            __file = open(_file,'rb').read()
+            with open(_file,'rb') as f:
+                __file = f.read()
         except Exception as reason:
             print("上传文件错误")
             return None
@@ -68,7 +78,8 @@ class virustotal(object):
 
     def _fast_check(self,_file):
         _md5 = hashlib.md5()
-        _md5.update(open(_file,'rb').read())
+        with open(_file,'rb') as f:
+            _md5.update(f.read())
         _md5 = _md5.hexdigest()
         _json = self._upload_check_file(_file)
         if 'Error 400' in _json:
@@ -90,9 +101,9 @@ class virustotal(object):
         _url = "https://www.virustotal.com/vtapi/v2/file/report"
         _parameters = {"resource":_sha256,"apikey":self._key}
         try:
-            _data = urllib.urlencode(_parameters)
-            _requset = urllib2.Request(_url,_data)
-            _response = urllib2.urlopen(_requset)
+            _data = urllib.parse.urlencode(_parameters).encode('utf-8')
+            _request = urllib.request.Request(_url,_data)
+            _response = urllib.request.urlopen(_request)
             _json = _response.read()
         except Exception as reason:
             return None
@@ -101,7 +112,9 @@ class virustotal(object):
     def check_file(self,_hash=None,_file=None):
         if _file != None:
             self._fast_check(_file)
-            _json = self._get_report(hashlib.sha256(open(_file,'rb').read()).hexdigest())
+            with open(_file,'rb') as f:
+                _file_hash = hashlib.sha256(f.read()).hexdigest()
+            _json = self._get_report(_file_hash)
         elif _hash != None:
             _json = self._get_report(_hash)
         else:

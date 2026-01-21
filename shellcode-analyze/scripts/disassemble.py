@@ -871,12 +871,12 @@ def disassemble(shellcode, operating_system, architecture):
                     if arch_mode == capstone.CS_MODE_64 and "rax" in prev_op:
                         try:
                             system_call_num = int(prev_op.split(",")[-1].strip(), 16)
-                        except:
+                        except (ValueError, IndexError, AttributeError):
                             pass
                     elif arch_mode == capstone.CS_MODE_32 and "eax" in prev_op:
                         try:
                             system_call_num = int(prev_op.split(",")[-1].strip(), 16)
-                        except:
+                        except (ValueError, IndexError, AttributeError):
                             pass
                 
                 # 获取系统调用名称
